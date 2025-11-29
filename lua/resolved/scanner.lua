@@ -29,35 +29,24 @@ function M.scan(bufnr)
     local has_keywords = patterns.has_stale_keywords(comment.text, cfg.stale_keywords)
 
     for _, url_match in ipairs(urls) do
+      -- Calculate absolute line/col position
+      -- For multi-line comments, we need to find which line the URL is on
       local url_line = comment.line
-      local url_col = url_match.start_col
+      local url_col = comment.col + url_match.start_col
 
-      -- Handle multi-line comments: calculate which line the URL is actually on
-      if comment.text:find("\n") then
-        -- Normalize line endings (CRLF -> LF) for consistent counting
-        local normalized_text = comment.text:gsub("\r\n", "\n")
-        local text_before_url = normalized_text:sub(1, url_match.start_col - 1)
-
-        -- Count newlines before the URL
-        local newlines_before = 0
-        for _ in text_before_url:gmatch("\n") do
-          newlines_before = newlines_before + 1
-        end
-
-        if newlines_before > 0 then
-          url_line = comment.line + newlines_before
-
-          -- Find the last newline position to calculate column offset
-          local last_newline_pos = text_before_url:match("^.*\n()")
-          if last_newline_pos then
-            -- Column is relative to the last newline
-            url_col = url_match.start_col - last_newline_pos + 1
-          else
-            -- No newline found (shouldn't happen if newlines_before > 0)
-            url_col = url_match.start_col
-          end
+      -- Handle multi-line comments: find actual line of URL
+      local text_before_url = comment.text:sub(1, url_match.start_col)
+      local newlines_before = select(2, text_before_url:gsub("\n", ""))
+      if newlines_before > 0 then
+        url_line = comment.line + newlines_before
+        -- Find column on that line
+        local last_newline = text_before_url:match(".*\n()")
+        if last_newline then
+          url_col = url_match.start_col - last_newline + 1
         end
       end
+
+      local url_end_col = url_col + #url_match.url
 
       table.insert(references, {
         url = url_match.url,
@@ -65,9 +54,9 @@ function M.scan(bufnr)
         repo = url_match.repo,
         type = url_match.type,
         number = url_match.number,
-        line = url_line,
+        line = url_line + 1, -- Convert to 1-indexed
         col = url_col,
-        end_col = url_col + #url_match.url,
+        end_col = url_end_col,
         comment_text = comment.text,
         has_stale_keywords = has_keywords,
       })
