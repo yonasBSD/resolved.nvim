@@ -1,0 +1,19 @@
+# direnv
+.direnv/
+
+# Nix result symlink
+result
+
+# Lua
+*.luac
+luac.out
+
+# Editor
+*.swp
+*.swo
+*~
+.nvim.lua
+
+# OS
+.DS_Store
+Thumbs.db
