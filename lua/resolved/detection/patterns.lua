@@ -16,6 +16,28 @@ local M = {}
 local GITHUB_PATTERN = "https?://github%.com/([%w%-%.]+)/([%w%-%.]+)/(issues?)/(%d+)"
 local GITHUB_PR_PATTERN = "https?://github%.com/([%w%-%.]+)/([%w%-%.]+)/(pull)/(%d+)"
 
+---Validates a GitHub repository component (owner or repo name)
+---@param str string The component to validate
+---@return boolean True if valid
+local function is_valid_repo_component(str)
+  if not str or str == "" then
+    return false
+  end
+
+  -- GitHub allows alphanumeric, hyphens, and dots
+  -- But not leading/trailing dots or consecutive dots
+  if str:match("^%.") or str:match("%.$") or str:match("%.%.") then
+    return false
+  end
+
+  -- Must only contain allowed characters
+  if not str:match("^[%w%-%.]+$") then
+    return false
+  end
+
+  return true
+end
+
 ---Extract all GitHub URLs from text
 ---@param text string
 ---@return resolved.UrlMatch[]
@@ -31,15 +53,18 @@ function M.extract_urls(text)
       break
     end
 
-    table.insert(matches, {
-      url = text:sub(start_pos, end_pos),
-      owner = owner,
-      repo = repo,
-      number = tonumber(number_str),
-      type = "issue",
-      start_col = start_pos - 1, -- Convert to 0-indexed
-      end_col = end_pos, -- 0-indexed exclusive
-    })
+    -- Validate owner and repo components
+    if is_valid_repo_component(owner) and is_valid_repo_component(repo) then
+      table.insert(matches, {
+        url = text:sub(start_pos, end_pos),
+        owner = owner,
+        repo = repo,
+        number = tonumber(number_str),
+        type = "issue",
+        start_col = start_pos - 1, -- Convert to 0-indexed
+        end_col = end_pos, -- 0-indexed exclusive
+      })
+    end
     search_start = end_pos + 1
   end
 
@@ -52,15 +77,18 @@ function M.extract_urls(text)
       break
     end
 
-    table.insert(matches, {
-      url = text:sub(start_pos, end_pos),
-      owner = owner,
-      repo = repo,
-      number = tonumber(number_str),
-      type = "pr",
-      start_col = start_pos - 1,
-      end_col = end_pos,
-    })
+    -- Validate owner and repo components
+    if is_valid_repo_component(owner) and is_valid_repo_component(repo) then
+      table.insert(matches, {
+        url = text:sub(start_pos, end_pos),
+        owner = owner,
+        repo = repo,
+        number = tonumber(number_str),
+        type = "pr",
+        start_col = start_pos - 1,
+        end_col = end_pos,
+      })
+    end
     search_start = end_pos + 1
   end
 
