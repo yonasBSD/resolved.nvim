@@ -390,11 +390,20 @@ end
 ---Set up the plugin
 ---@param user_config? resolved.Config
 function M.setup(user_config)
-  -- Merge config
+  -- Prevent double initialization
+  if M._setup_done then
+    vim.notify(
+      "[resolved.nvim] Already initialized. Call resolved.disable() first if you want to reconfigure.",
+      vim.log.levels.WARN
+    )
+    return
+  end
+
+  -- Step 1: Validate and apply configuration
   config.setup(user_config)
   local cfg = config.get()
 
-  -- Check gh auth
+  -- Step 2: Check GitHub auth BEFORE creating any resources
   local ok, err = github.check_auth()
   if not ok then
     vim.notify(
@@ -404,21 +413,20 @@ function M.setup(user_config)
     return
   end
 
-  -- Initialize cache
+  -- Step 3: Initialize cache (after validation passes)
   M._cache = cache_mod.new(cfg.cache_ttl)
 
-  -- Set up autocmds and commands
+  -- Step 4: Setup autocmds (only after all validation passes)
   setup_autocmds()
+
+  -- Step 5: Setup commands
   setup_commands()
 
   M._setup_done = true
-  M._enabled = cfg.enabled
 
-  -- Initial scan if enabled
-  if M._enabled then
-    vim.schedule(function()
-      M.refresh()
-    end)
+  -- Step 6: Enable if configured to start enabled
+  if cfg.enabled then
+    M.enable()
   end
 end
 
