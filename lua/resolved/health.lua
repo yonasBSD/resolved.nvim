@@ -57,10 +57,20 @@ function M.check()
   local resolved = require("resolved")
   if resolved._setup_done then
     health.ok("Plugin initialized")
-    if resolved._enabled then
-      health.ok("Plugin enabled")
+
+    -- Check cache status
+    if resolved._cache then
+      health.ok("Cache initialized")
+      -- Could add cache stats here if implemented
     else
-      health.info("Plugin disabled (run :ResolvedEnable to activate)")
+      health.info("Cache not yet initialized")
+    end
+
+    -- Check enabled status
+    if resolved._enabled then
+      health.ok("Plugin is enabled")
+    else
+      health.info("Plugin is disabled (run :ResolvedEnable to activate)")
     end
   else
     health.warn("Plugin not initialized", {
