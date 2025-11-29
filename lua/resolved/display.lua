@@ -15,6 +15,16 @@ local M = {}
 local NS = vim.api.nvim_create_namespace("resolved")
 local NS_URL = vim.api.nvim_create_namespace("resolved_url")
 
+---Log an error safely without blocking
+---@param msg string Error message
+---@param level integer? Log level (default: DEBUG)
+local function log_error(msg, level)
+  level = level or vim.log.levels.DEBUG
+  vim.schedule(function()
+    vim.notify(string.format("[resolved.nvim] %s", msg), level)
+  end)
+end
+
 -- Define highlight groups
 local highlights_defined = false
 local function define_highlights()
@@ -121,23 +131,32 @@ function M.update(bufnr, items)
     end
 
     -- Place extmark at end of URL for inline positioning
-    pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, item.line - 1, item.end_col, extmark_opts)
+    local ok, err = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, item.line - 1, item.end_col, extmark_opts)
+    if not ok then
+      log_error(string.format("Failed to set extmark at %d:%d: %s", item.line, item.end_col, err))
+    end
 
     -- Highlight URL based on tier
     if tier == "stale" then
       -- High priority: strikethrough + warning color
-      pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_URL, item.line - 1, item.col, {
+      local ok, err = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_URL, item.line - 1, item.col, {
         end_col = item.end_col,
         hl_group = cfg.highlights.stale_url or "ResolvedStaleUrl",
         priority = 200,
       })
+      if not ok then
+        log_error(string.format("Failed to set stale URL highlight at %d:%d: %s", item.line, item.col, err))
+      end
     elseif tier == "closed" then
       -- Low priority: subtle strikethrough
-      pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_URL, item.line - 1, item.col, {
+      local ok, err = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_URL, item.line - 1, item.col, {
         end_col = item.end_col,
         hl_group = cfg.highlights.closed_url or "ResolvedClosedUrl",
         priority = 200,
       })
+      if not ok then
+        log_error(string.format("Failed to set closed URL highlight at %d:%d: %s", item.line, item.col, err))
+      end
     end
     -- Open issues: no URL highlight, just virtual text
   end

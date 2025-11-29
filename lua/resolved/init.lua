@@ -143,7 +143,12 @@ local function process_refs(bufnr, refs)
       end
     end
 
-    display.update(bufnr, display_items)
+    -- Update display safely
+    pcall(function()
+      if vim.api.nvim_buf_is_valid(bufnr) then
+        display.update(bufnr, display_items)
+      end
+    end)
   end
 
   -- If everything is cached, update immediately
