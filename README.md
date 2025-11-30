@@ -21,7 +21,7 @@ resolved.nvim scans your code for GitHub issue/PR URLs in comments and shows the
 - **Closed** (no keywords): Subtle strikethrough, hint color
 - **Open**: Green status indicator
 
-![screenshot](https://github.com/user-attachments/assets/placeholder.png)
+<!-- TODO: Add demo GIF -->
 
 ## Requirements
 
@@ -76,6 +76,9 @@ require("resolved").setup({
   -- Debounce delay for buffer scanning
   debounce_ms = 500,
 
+  -- Include pull requests (not just issues)
+  include_prs = true,
+
   -- Keywords indicating workarounds (triggers "stale" when issue closes)
   stale_keywords = {
     "TODO", "FIXME", "HACK", "XXX", "WA",
@@ -88,8 +91,9 @@ require("resolved").setup({
     lua = { node_types = { "comment" } },
     python = { node_types = { "comment", "string" } },
     rust = { node_types = { "line_comment", "block_comment" } },
+    markdown = { node_types = { "inline" } },
     -- Disable for a filetype:
-    markdown = false,
+    -- json = false,
     -- Fallback for unlisted filetypes:
     ["*"] = { node_types = { "comment" } },
   },
@@ -128,15 +132,15 @@ Single command with tab completion:
 :Resolved          → show status
 ```
 
-| Command                  | Description                  |
-| ------------------------ | ---------------------------- |
-| `:Resolved`              | Show plugin status           |
-| `:Resolved enable`       | Enable the plugin            |
-| `:Resolved disable`      | Disable the plugin           |
-| `:Resolved toggle`       | Toggle enabled state         |
-| `:Resolved refresh`      | Refresh current buffer       |
-| `:Resolved clear_cache`  | Clear the issue status cache |
-| `:Resolved status`       | Show plugin status           |
+| Command                  | Description                        |
+| ------------------------ | ---------------------------------- |
+| `:Resolved`              | Show plugin status                 |
+| `:Resolved enable`       | Enable the plugin                  |
+| `:Resolved disable`      | Disable the plugin                 |
+| `:Resolved toggle`       | Toggle enabled state               |
+| `:Resolved refresh`      | Refresh current buffer             |
+| `:Resolved clear_cache`  | Clear the issue status cache       |
+| `:Resolved issues`       | Open picker with all issues/PRs    |
 
 ## Lua API
 
@@ -150,6 +154,9 @@ resolved.toggle()      -- Toggle
 resolved.refresh()     -- Refresh current buffer
 resolved.refresh_all() -- Refresh all visible buffers
 resolved.clear_cache() -- Clear cache
+
+-- Picker (requires snacks.nvim or falls back to vim.ui.select)
+require("resolved.picker").show_issues_picker()
 ```
 
 ## Integrations
@@ -172,22 +179,6 @@ Snacks.toggle.new({
 }):map("<leader>uR")
 ```
 
-### lualine.nvim
-
-```lua
-{
-  function()
-    if require("resolved").is_enabled() then
-      return "⚠"
-    end
-    return ""
-  end,
-  cond = function()
-    return package.loaded["resolved"] ~= nil
-  end,
-}
-```
-
 ## Health Check
 
 Verify your setup with `:checkhealth resolved`:
@@ -203,8 +194,8 @@ resolved.nvim
 
 ## How It Works
 
-1. **Scan**: Treesitter finds comments, regex extracts GitHub URLs
-2. **Fetch**: Queries GitHub API via `gh` CLI (cached)
+1. **Scan**: Treesitter finds comments (or inline text in markdown), regex extracts GitHub URLs
+2. **Fetch**: Queries GitHub API via `gh` CLI (cached for 5 minutes)
 3. **Display**: Inline status after URL, strikethrough for closed issues
 
 ## Tier System
@@ -253,6 +244,12 @@ The plugin has comprehensive test coverage including:
 - Type annotations using LuaLS format
 - Comprehensive error handling with logging
 - Security-first design (input validation, safe command execution)
+
+## TODO
+
+- [ ] Add demo GIF showing: file with GitHub URLs → status indicators appearing → picker (`:Resolved issues`)
+- [ ] lualine.nvim integration (show stale issue count in statusline)
+- [ ] telescope.nvim picker integration
 
 ## License
 

@@ -130,7 +130,8 @@ function M.update(bufnr, items)
     end
 
     -- Place extmark at end of URL for inline positioning
-    local ok, err = pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, item.line - 1, item.end_col, extmark_opts)
+    local ok, err =
+      pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, item.line - 1, item.end_col, extmark_opts)
     if not ok then
       log_error(string.format("Failed to set extmark at %d:%d: %s", item.line, item.end_col, err))
     end
@@ -144,7 +145,9 @@ function M.update(bufnr, items)
         priority = 200,
       })
       if not ok then
-        log_error(string.format("Failed to set stale URL highlight at %d:%d: %s", item.line, item.col, err))
+        log_error(
+          string.format("Failed to set stale URL highlight at %d:%d: %s", item.line, item.col, err)
+        )
       end
     elseif tier == "closed" then
       -- Low priority: subtle strikethrough
@@ -154,7 +157,9 @@ function M.update(bufnr, items)
         priority = 200,
       })
       if not ok then
-        log_error(string.format("Failed to set closed URL highlight at %d:%d: %s", item.line, item.col, err))
+        log_error(
+          string.format("Failed to set closed URL highlight at %d:%d: %s", item.line, item.col, err)
+        )
       end
     end
     -- Open issues: no URL highlight, just virtual text

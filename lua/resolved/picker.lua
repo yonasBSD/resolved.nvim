@@ -1,5 +1,20 @@
 local Job = require("plenary.job")
 
+-- Constants
+local MAX_FILE_SIZE_BYTES = 1024 * 1024 -- 1MB - skip files larger than this
+local BATCH_SIZE = 20 -- Number of files to process in parallel per batch
+local GIT_TIMEOUT_MS = 30000 -- 30 second timeout for git commands
+local PROGRESS_THROTTLE_MS = 500 -- Update notifications at most every 500ms
+
+---Notify helper for consistent error/info messages
+---@param msg string
+---@param level? integer vim.log.levels value
+---@param opts? table Additional notification options
+local function notify(msg, level, opts)
+  opts = opts or {}
+  vim.notify("[resolved.nvim] " .. msg, level or vim.log.levels.INFO, opts)
+end
+
 ---@class resolved.FileReference : resolved.Reference
 ---@field file_path string Absolute path to file
 
@@ -25,13 +40,27 @@ local function get_tracked_files_async(callback)
     return
   end
 
-  -- Use plenary.Job to run: git ls-files
-  Job:new({
+  -- Validate and normalize cwd
+  local cwd = vim.fn.getcwd()
+  if vim.fn.isdirectory(cwd) ~= 1 then
+    callback("Invalid working directory", nil)
+    return
+  end
+  cwd = vim.fn.fnamemodify(cwd, ":p") -- Normalize to absolute path
+
+  -- Use plenary.Job to run: git ls-files with timeout
+  local job = Job:new({
     command = "git",
     args = { "ls-files" },
-    cwd = vim.fn.getcwd(),
-    on_exit = function(j, code)
+    cwd = cwd,
+    on_exit = function(j, code, signal)
       vim.schedule(function()
+        -- Check for timeout (signal 9 = SIGKILL from timeout)
+        if signal == 9 then
+          callback("Git command timed out", nil)
+          return
+        end
+
         if code ~= 0 then
           local err = table.concat(j:stderr_result(), "\n")
           callback("Not a git repository: " .. err, nil)
@@ -40,7 +69,6 @@ local function get_tracked_files_async(callback)
 
         local output = j:result()
         local files = {}
-        local cwd = vim.fn.getcwd()
 
         for _, rel_path in ipairs(output) do
           if rel_path ~= "" then
@@ -51,53 +79,80 @@ local function get_tracked_files_async(callback)
         callback(nil, files)
       end)
     end,
-  }):start()
+  })
+
+  job:start()
+
+  -- Set up timeout
+  vim.defer_fn(function()
+    if job.handle and not job.handle:is_closing() then
+      job:shutdown(1, 9) -- Send SIGKILL after 1ms grace period
+    end
+  end, GIT_TIMEOUT_MS)
 end
 
 ---Scan a file for GitHub references (async, non-blocking)
----@param file_path string
----@param callback fun(refs: resolved.FileReference[])
+---@param file_path string Absolute path to the file to scan
+---@param callback fun(refs: resolved.FileReference[]) Callback with extracted references
 local function scan_file_async(file_path, callback)
   local uv = vim.loop
+  local fd = nil
+
+  -- Cleanup helper to ensure fd is always closed
+  local function cleanup()
+    if fd then
+      uv.fs_close(fd)
+      fd = nil
+    end
+  end
+
+  -- Safe callback that ensures cleanup
+  local function safe_callback(refs)
+    cleanup()
+    vim.schedule(function()
+      callback(refs)
+    end)
+  end
 
   -- Open file
-  uv.fs_open(file_path, "r", 438, function(err_open, fd)
-    if err_open or not fd then
+  uv.fs_open(file_path, "r", 438, function(err_open, opened_fd)
+    if err_open or not opened_fd then
       vim.schedule(function()
         callback({})
       end)
       return
     end
 
+    fd = opened_fd
+
     -- Get file size
     uv.fs_fstat(fd, function(err_stat, stat)
       if err_stat or not stat then
-        uv.fs_close(fd)
-        vim.schedule(function()
-          callback({})
-        end)
+        safe_callback({})
         return
       end
 
-      -- Skip large files (>1MB)
-      if stat.size > 1048576 then
-        uv.fs_close(fd)
-        vim.schedule(function()
-          callback({})
-        end)
+      -- Skip large files
+      if stat.size > MAX_FILE_SIZE_BYTES then
+        safe_callback({})
+        return
+      end
+
+      -- Skip empty files
+      if stat.size == 0 then
+        safe_callback({})
         return
       end
 
       -- Read file content
       uv.fs_read(fd, stat.size, 0, function(err_read, data)
-        uv.fs_close(fd)
-
         if err_read or not data then
-          vim.schedule(function()
-            callback({})
-          end)
+          safe_callback({})
           return
         end
+
+        -- Close fd immediately after read
+        cleanup()
 
         vim.schedule(function()
           -- Skip binary files (contains null byte)
@@ -111,29 +166,45 @@ local function scan_file_async(file_path, callback)
           local config = require("resolved.config").get()
           local refs = {}
 
-          -- Split into lines and scan each
+          -- Efficient line splitting without string concatenation
           local line_num = 1
-          for line_text in (data .. "\n"):gmatch("([^\n]*)\n") do
-            local urls = patterns.extract_urls(line_text)
-            local has_keywords = patterns.has_stale_keywords(line_text, config.stale_keywords)
+          local start_idx = 1
+          local data_len = #data
 
-            for _, url_match in ipairs(urls) do
-              table.insert(refs, {
-                url = url_match.url,
-                owner = url_match.owner,
-                repo = url_match.repo,
-                type = url_match.type,
-                number = url_match.number,
-                line = line_num,
-                col = url_match.start_col,
-                end_col = url_match.end_col,
-                comment_text = line_text:match("^%s*(.-)%s*$"), -- Trim
-                has_stale_keywords = has_keywords,
-                file_path = file_path,
-              })
+          while start_idx <= data_len do
+            local end_idx = data:find("\n", start_idx, true) or (data_len + 1)
+            local line_text = data:sub(start_idx, end_idx - 1)
+
+            local urls = patterns.extract_urls(line_text)
+
+            if #urls > 0 then
+              local has_keywords = patterns.has_stale_keywords(line_text, config.stale_keywords)
+
+              for _, url_match in ipairs(urls) do
+                -- Validate URL match has required fields
+                if url_match.url and url_match.owner and url_match.repo and url_match.number then
+                  -- Filter out PRs unless include_prs is enabled
+                  if url_match.type == "issue" or config.include_prs then
+                    table.insert(refs, {
+                      url = url_match.url,
+                      owner = url_match.owner,
+                      repo = url_match.repo,
+                      type = url_match.type,
+                      number = url_match.number,
+                      line = line_num,
+                      col = url_match.start_col,
+                      end_col = url_match.end_col,
+                      comment_text = line_text:match("^%s*(.-)%s*$"), -- Trim
+                      has_stale_keywords = has_keywords,
+                      file_path = file_path,
+                    })
+                  end
+                end
+              end
             end
 
             line_num = line_num + 1
+            start_idx = end_idx + 1
           end
 
           callback(refs)
@@ -144,15 +215,14 @@ local function scan_file_async(file_path, callback)
 end
 
 ---Scan all files in batches (async with progress)
----@param files string[]
----@param on_progress fun(completed: integer, total: integer, found: integer)
----@param callback fun(refs: resolved.FileReference[])
+---Uses atomic counter pattern to avoid race conditions in batch completion detection.
+---@param files string[] List of file paths to scan
+---@param on_progress fun(completed: integer, total: integer, found: integer) Progress callback
+---@param callback fun(refs: resolved.FileReference[]) Final callback with all references
 local function scan_files_batched(files, on_progress, callback)
   local all_refs = {}
-  local batch_size = 20
   local completed = 0
   local last_progress_time = 0
-  local progress_throttle_ms = 500 -- Update notifications at most every 500ms
 
   local function process_batch(start_idx)
     if start_idx > #files then
@@ -162,30 +232,43 @@ local function scan_files_batched(files, on_progress, callback)
       return
     end
 
-    local batch_end = math.min(start_idx + batch_size - 1, #files)
+    local batch_end = math.min(start_idx + BATCH_SIZE - 1, #files)
     local batch = vim.list_slice(files, start_idx, batch_end)
-    local pending = #batch
+    local batch_completed = 0
+    local batch_size = #batch
+    local batch_done = false -- Guard to ensure we only trigger next batch once
 
     -- Process all files in batch in parallel
     for _, file in ipairs(batch) do
       scan_file_async(file, function(refs)
-        vim.list_extend(all_refs, refs)
-        pending = pending - 1
-        completed = completed + 1
-
-        if pending == 0 then
-          -- Batch complete - throttle progress updates
-          local now = vim.loop.now()
-          if now - last_progress_time >= progress_throttle_ms then
-            on_progress(completed, #files, #all_refs)
-            last_progress_time = now
+        -- All state updates happen in vim.schedule callbacks (main thread)
+        -- This ensures no race conditions as Lua is single-threaded
+        vim.schedule(function()
+          -- Guard against duplicate completion
+          if batch_done then
+            return
           end
 
-          -- Schedule next batch (yield to event loop)
-          vim.schedule(function()
-            process_batch(batch_end + 1)
-          end)
-        end
+          vim.list_extend(all_refs, refs)
+          batch_completed = batch_completed + 1
+          completed = completed + 1
+
+          if batch_completed >= batch_size then
+            batch_done = true -- Prevent any late callbacks from triggering
+
+            -- Batch complete - throttle progress updates
+            local now = vim.loop.now()
+            if now - last_progress_time >= PROGRESS_THROTTLE_MS then
+              on_progress(completed, #files, #all_refs)
+              last_progress_time = now
+            end
+
+            -- Schedule next batch (yield to event loop)
+            vim.schedule(function()
+              process_batch(batch_end + 1)
+            end)
+          end
+        end)
       end)
     end
   end
@@ -364,40 +447,100 @@ local function fetch_and_build_issues(by_url, on_progress, callback)
   end)
 end
 
----Jump to file location
+---Jump to file location with validation
 ---@param location resolved.FileReference
 local function jump_to_location(location)
-  -- Open file
-  vim.cmd.edit(vim.fn.fnameescape(location.file_path))
+  -- Open file with error handling
+  local ok, err = pcall(vim.cmd.edit, vim.fn.fnameescape(location.file_path))
+  if not ok then
+    notify(string.format("Failed to open file: %s", err), vim.log.levels.ERROR)
+    return
+  end
+
+  local bufnr = vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    notify("Buffer became invalid after opening file", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Validate line exists in buffer
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local target_line = location.line
+  if target_line > line_count then
+    notify(
+      string.format("Line %d exceeds file length %d, jumping to end", target_line, line_count),
+      vim.log.levels.WARN
+    )
+    target_line = line_count
+  end
+
+  -- Validate column is within line bounds
+  local line_text = vim.api.nvim_buf_get_lines(bufnr, target_line - 1, target_line, false)[1] or ""
+  local target_col = math.min(location.col, math.max(0, #line_text - 1))
 
   -- Jump to position
-  vim.api.nvim_win_set_cursor(0, { location.line, location.col })
+  vim.api.nvim_win_set_cursor(0, { target_line, target_col })
 
   -- Center view
   vim.cmd("normal! zz")
 
   -- Flash highlight (optional)
   vim.defer_fn(function()
-    local bufnr = vim.api.nvim_get_current_buf()
-    if vim.api.nvim_buf_is_valid(bufnr) then
-      local ns = vim.api.nvim_create_namespace("resolved_picker_flash")
-      vim.api.nvim_buf_set_extmark(bufnr, ns, location.line - 1, location.col, {
-        end_col = location.end_col,
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+      return
+    end
+
+    local ns = vim.api.nvim_create_namespace("resolved_picker_flash")
+    local end_col = math.min(location.end_col or (target_col + 1), #line_text)
+
+    pcall(function()
+      vim.api.nvim_buf_set_extmark(bufnr, ns, target_line - 1, target_col, {
+        end_col = end_col,
         hl_group = "IncSearch",
       })
-      vim.defer_fn(function()
-        pcall(vim.api.nvim_buf_clear_namespace, bufnr, ns, 0, -1)
-      end, 500)
-    end
+    end)
+
+    vim.defer_fn(function()
+      pcall(vim.api.nvim_buf_clear_namespace, bufnr, ns, 0, -1)
+    end, 500)
   end, 50)
+end
+
+---Generic picker creation with snacks.picker fallback to vim.ui.select
+---@param items table[] Items to pick from
+---@param opts {prompt: string, format_item: fun(item: table): string, format_snacks?: "text"|fun(item: table): table, on_select: fun(item: table)}
+local function create_picker(items, opts)
+  local has_snacks, snacks = pcall(require, "snacks")
+
+  if has_snacks and snacks.picker then
+    -- Determine format for snacks.picker
+    local format = opts.format_snacks or "text"
+
+    snacks.picker.pick({
+      items = items,
+      format = format,
+      prompt = opts.prompt,
+      on_select = opts.on_select,
+    })
+  else
+    -- Fallback to vim.ui.select
+    vim.ui.select(items, {
+      prompt = opts.prompt .. ":",
+      format_item = opts.format_item,
+    }, function(selected)
+      if selected then
+        opts.on_select(selected)
+      end
+    end)
+  end
 end
 
 ---Show location picker for multiple refs
 ---@param issue resolved.PickerIssue
 local function show_location_picker(issue)
-  local has_snacks, snacks = pcall(require, "snacks")
-
-  local format_loc = function(loc)
+  ---@param loc resolved.FileReference
+  ---@return string
+  local function format_loc(loc)
     local rel_path = vim.fn.fnamemodify(loc.file_path, ":~:.")
     return string.format("%s:%d - %s", rel_path, loc.line, loc.comment_text)
   end
@@ -410,23 +553,12 @@ local function show_location_picker(issue)
     table.insert(locations_with_text, loc_copy)
   end
 
-  if has_snacks and snacks.picker then
-    snacks.picker.pick({
-      items = locations_with_text,
-      format = "text",
-      prompt = string.format("References to #%d", issue.number),
-      on_select = jump_to_location,
-    })
-  else
-    vim.ui.select(issue.locations, {
-      prompt = "Select reference:",
-      format_item = format_loc,
-    }, function(selected)
-      if selected then
-        jump_to_location(selected)
-      end
-    end)
-  end
+  create_picker(locations_with_text, {
+    prompt = string.format("References to #%d", issue.number),
+    format_item = format_loc,
+    format_snacks = "text",
+    on_select = jump_to_location,
+  })
 end
 
 ---Handle issue selection
@@ -442,34 +574,17 @@ end
 ---Show snacks picker or fallback
 ---@param issues resolved.PickerIssue[]
 local function show_picker(issues)
-  local has_snacks, snacks = pcall(require, "snacks")
-
-  if has_snacks and snacks.picker then
-    -- Use snacks.ui picker with highlight support
-    snacks.picker.pick({
-      items = issues,
-      format = function(item)
-        -- Return array of {text, highlight} tuples for colored display
-        return {
-          { item.text, item.hl or "Normal" }
-        }
-      end,
-      prompt = "GitHub Issues",
-      on_select = function(item)
-        handle_issue_selection(item)
-      end,
-    })
-  else
-    -- Fallback to vim.ui.select
-    vim.ui.select(issues, {
-      prompt = "Select issue:",
-      format_item = format_issue,
-    }, function(selected)
-      if selected then
-        handle_issue_selection(selected)
-      end
-    end)
-  end
+  create_picker(issues, {
+    prompt = "GitHub Issues",
+    format_item = format_issue,
+    format_snacks = function(item)
+      -- Return array of {text, highlight} tuples for colored display
+      return {
+        { item.text, item.hl or "Normal" },
+      }
+    end,
+    on_select = handle_issue_selection,
+  })
 end
 
 ---Show GitHub issues picker
@@ -480,71 +595,63 @@ function M.show_issues_picker(opts)
 
   -- Verify setup
   if not resolved._setup_done then
-    vim.notify("[resolved.nvim] Run setup() first", vim.log.levels.ERROR)
+    notify("Run setup() first", vim.log.levels.ERROR)
     return
   end
 
   -- Use consistent ID string for automatic notification replacement
   local notif_id = "resolved_picker_progress"
 
-  -- Create initial notification
+  -- Create initial notification (raw vim.notify for progress, without prefix)
   vim.notify("Getting file list...", vim.log.levels.INFO, { id = notif_id, timeout = false })
 
   get_tracked_files_async(function(err, files)
     if err then
-      vim.notify("[resolved.nvim] " .. err, vim.log.levels.ERROR, { id = notif_id, timeout = 3000 })
+      notify(err, vim.log.levels.ERROR, { id = notif_id, timeout = 3000 })
       return
     end
 
     if not files or #files == 0 then
-      vim.notify("[resolved.nvim] No tracked files", vim.log.levels.INFO, { id = notif_id, timeout = 2000 })
+      notify("No tracked files", vim.log.levels.INFO, { id = notif_id, timeout = 2000 })
       return
     end
 
     -- Step 2: Scan files
-    scan_files_batched(
-      files,
-      function(completed, total, found)
-        -- Reuse same ID to automatically replace notification
-        vim.notify(
-          string.format("Scanning: %d/%d files (%d refs)", completed, total, found),
-          vim.log.levels.INFO,
-          { id = notif_id, timeout = false }
-        )
-      end,
-      function(refs)
-        if #refs == 0 then
-          vim.notify("[resolved.nvim] No GitHub references found", vim.log.levels.INFO, { id = notif_id, timeout = 2000 })
-          return
-        end
-
-        -- Step 3: Group by URL
-        local by_url = group_by_url(refs)
-
-        -- Step 4: Fetch states
-        vim.notify(
-          string.format("Fetching status for %d issues...", vim.tbl_count(by_url)),
-          vim.log.levels.INFO,
-          { id = notif_id, timeout = false }
-        )
-
-        fetch_and_build_issues(
-          by_url,
-          function(fetched, total)
-            -- Progress callback (currently unused, could show)
-          end,
-          function(issues)
-            -- Step 5: Replace notification with success message that auto-dismisses
-            vim.notify(
-              string.format("Found %d issues", #issues),
-              vim.log.levels.INFO,
-              { id = notif_id, timeout = 500 }
-            )
-            show_picker(issues)
-          end
-        )
+    scan_files_batched(files, function(completed, total, found)
+      -- Reuse same ID to automatically replace notification (no prefix for progress)
+      vim.notify(
+        string.format("Scanning: %d/%d files (%d refs)", completed, total, found),
+        vim.log.levels.INFO,
+        { id = notif_id, timeout = false }
+      )
+    end, function(refs)
+      if #refs == 0 then
+        notify("No GitHub references found", vim.log.levels.INFO, { id = notif_id, timeout = 2000 })
+        return
       end
-    )
+
+      -- Step 3: Group by URL
+      local by_url = group_by_url(refs)
+
+      -- Step 4: Fetch states (no prefix for progress)
+      vim.notify(
+        string.format("Fetching status for %d issues...", vim.tbl_count(by_url)),
+        vim.log.levels.INFO,
+        { id = notif_id, timeout = false }
+      )
+
+      fetch_and_build_issues(by_url, function(fetched, total)
+        -- Progress callback (currently unused, could show)
+      end, function(issues)
+        -- Step 5: Replace notification with success message that auto-dismisses
+        vim.notify(
+          string.format("Found %d issues", #issues),
+          vim.log.levels.INFO,
+          { id = notif_id, timeout = 500 }
+        )
+        show_picker(issues)
+      end)
+    end)
   end)
 end
 

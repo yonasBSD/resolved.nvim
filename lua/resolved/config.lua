@@ -5,6 +5,7 @@
 ---@field enabled boolean Initial enabled state
 ---@field cache_ttl integer Cache TTL in seconds
 ---@field debounce_ms integer Debounce delay in milliseconds
+---@field include_prs boolean Whether to include pull requests (default: false, issues only)
 ---@field stale_keywords string[] Keywords indicating acknowledged stale references
 ---@field filetypes table<string, resolved.FiletypeConfig|false> Per-filetype treesitter config
 ---@field icons table<string, string> Icons for display
@@ -17,6 +18,7 @@ M.defaults = {
   enabled = true,
   cache_ttl = 300, -- 5 minutes
   debounce_ms = 500,
+  include_prs = true, -- Include both issues and PRs
   stale_keywords = {
     "TODO",
     "FIXME",
@@ -50,6 +52,7 @@ M.defaults = {
     zsh = { node_types = { "comment" } },
     yaml = { node_types = { "comment" } },
     toml = { node_types = { "comment" } },
+    markdown = { node_types = { "inline" } },
     ["*"] = { node_types = { "comment" } },
   },
   icons = {
@@ -114,6 +117,13 @@ local function validate_config(user_config)
   if user_config.enabled ~= nil then
     if type(user_config.enabled) ~= "boolean" then
       return false, "enabled must be a boolean"
+    end
+  end
+
+  -- Validate include_prs
+  if user_config.include_prs ~= nil then
+    if type(user_config.include_prs) ~= "boolean" then
+      return false, "include_prs must be a boolean"
     end
   end
 

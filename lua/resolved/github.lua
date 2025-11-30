@@ -119,57 +119,58 @@ end
 ---@param type "issue"|"pr"
 ---@param callback fun(err?: string, state?: resolved.IssueState)
 function M.fetch(owner, repo, number, type, callback)
-  local endpoint = type == "pr"
-      and string.format("repos/%s/%s/pulls/%d", owner, repo, number)
+  local endpoint = type == "pr" and string.format("repos/%s/%s/pulls/%d", owner, repo, number)
     or string.format("repos/%s/%s/issues/%d", owner, repo, number)
 
   local jq_filter = build_jq_filter(type)
 
-  Job:new({
-    command = "gh",
-    args = { "api", endpoint, "--jq", jq_filter },
-    on_exit = function(j, return_code)
-      vim.schedule(function()
-        if return_code ~= 0 then
-          local stderr = table.concat(j:stderr_result(), "\n")
-          -- Handle common errors gracefully
-          if stderr:match("404") or stderr:match("Not Found") then
-            callback(string.format("Issue/PR not found: %s/%s#%d", owner, repo, number))
-          elseif stderr:match("401") or stderr:match("403") then
-            callback("GitHub API authentication error. Try: gh auth login")
-          else
-            callback("gh api error: " .. stderr)
+  Job
+    :new({
+      command = "gh",
+      args = { "api", endpoint, "--jq", jq_filter },
+      on_exit = function(j, return_code)
+        vim.schedule(function()
+          if return_code ~= 0 then
+            local stderr = table.concat(j:stderr_result(), "\n")
+            -- Handle common errors gracefully
+            if stderr:match("404") or stderr:match("Not Found") then
+              callback(string.format("Issue/PR not found: %s/%s#%d", owner, repo, number))
+            elseif stderr:match("401") or stderr:match("403") then
+              callback("GitHub API authentication error. Try: gh auth login")
+            else
+              callback("gh api error: " .. stderr)
+            end
+            return
           end
-          return
-        end
 
-        local output = table.concat(j:result(), "")
-        local ok, data = pcall(vim.json.decode, output)
-        if not ok then
-          callback("Failed to parse GitHub response: " .. output)
-          return
-        end
+          local output = table.concat(j:result(), "")
+          local ok, data = pcall(vim.json.decode, output)
+          if not ok then
+            callback("Failed to parse GitHub response: " .. output)
+            return
+          end
 
-        -- Determine effective state
-        local state = data.state
-        if type == "pr" and data.merged then
-          state = "merged"
-        end
+          -- Determine effective state
+          local state = data.state
+          if type == "pr" and data.merged then
+            state = "merged"
+          end
 
-        ---@type resolved.IssueState
-        local issue_state = {
-          state = state,
-          state_reason = data.state_reason,
-          title = data.title or "",
-          labels = data.labels or {},
-          closed_at = data.closed_at,
-          merged_at = data.merged_at,
-        }
+          ---@type resolved.IssueState
+          local issue_state = {
+            state = state,
+            state_reason = data.state_reason,
+            title = data.title or "",
+            labels = data.labels or {},
+            closed_at = data.closed_at,
+            merged_at = data.merged_at,
+          }
 
-        callback(nil, issue_state)
-      end)
-    end,
-  }):start()
+          callback(nil, issue_state)
+        end)
+      end,
+    })
+    :start()
 end
 
 ---Fetch multiple issues/PRs (sequential for simplicity)

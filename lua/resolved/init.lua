@@ -22,7 +22,10 @@ end
 ---Enable the plugin
 function M.enable()
   if not M._setup_done then
-    vim.notify("[resolved.nvim] Plugin not set up. Call require('resolved').setup() first.", vim.log.levels.WARN)
+    vim.notify(
+      "[resolved.nvim] Plugin not set up. Call require('resolved').setup() first.",
+      vim.log.levels.WARN
+    )
     return
   end
   M._enabled = true
@@ -35,7 +38,7 @@ function M.disable()
   display.clear_all()
   -- Cancel pending timers
   for bufnr, timer in pairs(M._debounce_timers) do
-    if timer and not timer:is_closing() then
+    if timer and timer:is_closing() == false then
       timer:stop()
       timer:close()
     end
@@ -169,10 +172,7 @@ local function process_refs(bufnr, refs)
       elseif result.err then
         -- Log error but don't block display
         vim.schedule(function()
-          vim.notify(
-            string.format("[resolved.nvim] %s", result.err),
-            vim.log.levels.DEBUG
-          )
+          vim.notify(string.format("[resolved.nvim] %s", result.err), vim.log.levels.DEBUG)
         end)
       end
     end
@@ -222,13 +222,14 @@ function M._debounced_scan(bufnr)
   local existing = M._debounce_timers[bufnr]
   if existing then
     -- Use pcall to handle race condition where timer might be closing
+    -- Use explicit == false check since is_closing() can return nil
     pcall(function()
-      if not existing:is_closing() then
+      if existing:is_closing() == false then
         existing:stop()
       end
     end)
     pcall(function()
-      if not existing:is_closing() then
+      if existing:is_closing() == false then
         existing:close()
       end
     end)
@@ -297,7 +298,8 @@ local function setup_autocmds()
     group = M._augroup,
     callback = function(args)
       local timer = M._debounce_timers[args.buf]
-      if timer and not timer:is_closing() then
+      -- Use explicit == false check since is_closing() can return nil
+      if timer and timer:is_closing() == false then
         timer:stop()
         timer:close()
       end
@@ -370,10 +372,7 @@ local function setup_commands()
     if cmd then
       cmd.fn()
     else
-      vim.notify(
-        string.format("[resolved.nvim] Unknown command: %s", subcmd),
-        vim.log.levels.ERROR
-      )
+      vim.notify(string.format("[resolved.nvim] Unknown command: %s", subcmd), vim.log.levels.ERROR)
     end
   end, {
     nargs = "?",
@@ -412,10 +411,7 @@ function M.setup(user_config)
   -- Step 2: Check GitHub auth BEFORE creating any resources
   local ok, err = github.check_auth()
   if not ok then
-    vim.notify(
-      string.format("[resolved.nvim] %s\nPlugin disabled.", err),
-      vim.log.levels.ERROR
-    )
+    vim.notify(string.format("[resolved.nvim] %s\nPlugin disabled.", err), vim.log.levels.ERROR)
     return
   end
 
