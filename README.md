@@ -10,7 +10,7 @@ When a GitHub issue you're working around gets closed, resolved.nvim lets you kn
 - **🔔 Stale Reference Detection**
   - ⚠️ **Gutter Signs**: Visual indicators for workarounds that can be removed
   - 🎨 **Inline Status**: Shows `[completed]`, `[open]`, or `[merged]` after URLs
-  - ~~**Strikethrough URLs**~~: Closed issues get struck through for visibility
+  - 🔆 **URL Highlighting**: Stale URLs bold in warning color, closed URLs italic
 
 - **🔎 Smart Scanning**
   - 🌳 **Treesitter-Powered**: Finds URLs in comments across all major languages
@@ -47,7 +47,7 @@ Install with [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-  "noams/resolved.nvim",
+  "noamsto/resolved.nvim",
   dependencies = { "nvim-lua/plenary.nvim" },
   event = "VeryLazy",
   opts = {},
@@ -59,7 +59,7 @@ Install with [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 use {
-  "noams/resolved.nvim",
+  "noamsto/resolved.nvim",
   requires = { "nvim-lua/plenary.nvim" },
   config = function()
     require("resolved").setup()
@@ -173,30 +173,39 @@ require("resolved.picker").show_issues_picker()
 <summary>snacks.nvim toggle</summary>
 
 ```lua
-Snacks.toggle.new({
-  name = "Resolved",
-  get = function()
-    return require("resolved").is_enabled()
+{
+  "noamsto/resolved.nvim",
+  dependencies = { "nvim-lua/plenary.nvim" },
+  event = "VeryLazy",
+  opts = {},
+  config = function(_, opts)
+    require("resolved").setup(opts)
+    Snacks.toggle.new({
+      name = "Resolved",
+      get = function()
+        return require("resolved").is_enabled()
+      end,
+      set = function(state)
+        if state then
+          require("resolved").enable()
+        else
+          require("resolved").disable()
+        end
+      end,
+    }):map("<leader>uR")
   end,
-  set = function(state)
-    if state then
-      require("resolved").enable()
-    else
-      require("resolved").disable()
-    end
-  end,
-}):map("<leader>uR")
+}
 ```
 
 </details>
 
 ## 🏷️ Tier System
 
-| Tier       | Condition                  | Display                                    |
-| ---------- | -------------------------- | ------------------------------------------ |
-| **Stale**  | Closed/merged + keywords   | ⚠ gutter, yellow strikethrough, `[closed]` |
-| **Closed** | Closed/merged, no keywords | Strikethrough, `[closed]` in hint color    |
-| **Open**   | Still open or "not_planned"| `[open]` in green                          |
+| Tier       | Condition                  | Display                                |
+| ---------- | -------------------------- | -------------------------------------- |
+| **Stale**  | Closed/merged + keywords   | ⚠ gutter sign, bold URL, `[completed]` |
+| **Closed** | Closed/merged, no keywords | Italic URL, `[closed]` in hint color   |
+| **Open**   | Still open or "not_planned"| `[open]` in green                      |
 
 > [!NOTE]
 > Issues closed as "not_planned" (won't fix) are treated as open—your workaround is still needed.
