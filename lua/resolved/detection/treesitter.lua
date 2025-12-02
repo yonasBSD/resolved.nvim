@@ -58,6 +58,9 @@ function M.get_comments(bufnr)
     return {}
   end
 
+  -- Ensure tree is parsed (required for scratch buffers)
+  parser:parse()
+
   local comments = {}
   local seen = {} -- Deduplicate overlapping nodes
 

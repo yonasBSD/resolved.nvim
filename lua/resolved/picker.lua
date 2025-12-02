@@ -91,120 +91,88 @@ local function get_tracked_files_async(callback)
   end, GIT_TIMEOUT_MS)
 end
 
----Scan a file for GitHub references (async, non-blocking)
+---Scan a file for GitHub references using treesitter (reuses scanner module)
 ---@param file_path string Absolute path to the file to scan
 ---@param callback fun(refs: resolved.FileReference[]) Callback with extracted references
 local function scan_file_async(file_path, callback)
   local uv = vim.loop
-  local fd = nil
 
-  -- Cleanup helper to ensure fd is always closed
-  local function cleanup()
-    if fd then
-      uv.fs_close(fd)
-      fd = nil
-    end
-  end
-
-  -- Safe callback that ensures cleanup
-  local function safe_callback(refs)
-    cleanup()
-    vim.schedule(function()
-      callback(refs)
-    end)
-  end
-
-  -- Open file
-  uv.fs_open(file_path, "r", 438, function(err_open, opened_fd)
-    if err_open or not opened_fd then
+  -- Read file async, then process with treesitter
+  uv.fs_open(file_path, "r", 438, function(err_open, fd)
+    if err_open or not fd then
       vim.schedule(function()
         callback({})
       end)
       return
     end
 
-    fd = opened_fd
-
-    -- Get file size
     uv.fs_fstat(fd, function(err_stat, stat)
-      if err_stat or not stat then
-        safe_callback({})
+      if err_stat or not stat or stat.size > MAX_FILE_SIZE_BYTES or stat.size == 0 then
+        uv.fs_close(fd)
+        vim.schedule(function()
+          callback({})
+        end)
         return
       end
 
-      -- Skip large files
-      if stat.size > MAX_FILE_SIZE_BYTES then
-        safe_callback({})
-        return
-      end
-
-      -- Skip empty files
-      if stat.size == 0 then
-        safe_callback({})
-        return
-      end
-
-      -- Read file content
       uv.fs_read(fd, stat.size, 0, function(err_read, data)
-        if err_read or not data then
-          safe_callback({})
+        uv.fs_close(fd)
+
+        if err_read or not data or data:find("\0") then
+          vim.schedule(function()
+            callback({})
+          end)
           return
         end
 
-        -- Close fd immediately after read
-        cleanup()
-
         vim.schedule(function()
-          -- Skip binary files (contains null byte)
-          if data:find("\0") then
+          -- Check if buffer already exists and is loaded
+          local existing_bufnr = vim.fn.bufnr(file_path)
+          local was_loaded = existing_bufnr ~= -1 and vim.api.nvim_buf_is_loaded(existing_bufnr)
+
+          local bufnr
+          if was_loaded then
+            bufnr = existing_bufnr
+          else
+            -- Create scratch buffer and set content directly
+            bufnr = vim.api.nvim_create_buf(false, true) -- nofile, scratch
+            if not bufnr or bufnr == 0 then
+              callback({})
+              return
+            end
+
+            -- Set buffer content from file data
+            local lines = vim.split(data, "\n", { plain = true })
+            -- Remove trailing empty line if file doesn't end with newline
+            if lines[#lines] == "" then
+              table.remove(lines)
+            end
+            vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+
+            -- Detect and set filetype (needed for treesitter)
+            local ft = vim.filetype.match({ buf = bufnr, filename = file_path })
+            if ft then
+              vim.bo[bufnr].filetype = ft
+            end
+          end
+
+          -- Use the existing scanner (treesitter-based)
+          local scanner = require("resolved.scanner")
+          local ok, refs = pcall(scanner.scan, bufnr)
+
+          -- Clean up buffer before callback (ensures cleanup even if scan errors)
+          if not was_loaded then
+            pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+          end
+
+          if not ok then
             callback({})
             return
           end
 
-          -- Extract URLs using patterns module
-          local patterns = require("resolved.detection.patterns")
-          local config = require("resolved.config").get()
-          local refs = {}
-
-          -- Efficient line splitting without string concatenation
-          local line_num = 1
-          local start_idx = 1
-          local data_len = #data
-
-          while start_idx <= data_len do
-            local end_idx = data:find("\n", start_idx, true) or (data_len + 1)
-            local line_text = data:sub(start_idx, end_idx - 1)
-
-            local urls = patterns.extract_urls(line_text)
-
-            if #urls > 0 then
-              local has_keywords = patterns.has_stale_keywords(line_text, config.stale_keywords)
-
-              for _, url_match in ipairs(urls) do
-                -- Validate URL match has required fields
-                if url_match.url and url_match.owner and url_match.repo and url_match.number then
-                  -- Filter out PRs unless include_prs is enabled
-                  if url_match.type == "issue" or config.include_prs then
-                    table.insert(refs, {
-                      url = url_match.url,
-                      owner = url_match.owner,
-                      repo = url_match.repo,
-                      type = url_match.type,
-                      number = url_match.number,
-                      line = line_num,
-                      col = url_match.start_col,
-                      end_col = url_match.end_col,
-                      comment_text = line_text:match("^%s*(.-)%s*$"), -- Trim
-                      has_stale_keywords = has_keywords,
-                      file_path = file_path,
-                    })
-                  end
-                end
-              end
-            end
-
-            line_num = line_num + 1
-            start_idx = end_idx + 1
+          -- Add file_path to each ref
+          for _, ref in ipairs(refs) do
+            ref.file_path = file_path
           end
 
           callback(refs)
@@ -575,7 +543,7 @@ end
 ---@param issues resolved.PickerIssue[]
 local function show_picker(issues)
   create_picker(issues, {
-    prompt = "GitHub Issues",
+    prompt = "GitHub Issues: ",
     format_item = format_issue,
     format_snacks = function(item)
       -- Return array of {text, highlight} tuples for colored display

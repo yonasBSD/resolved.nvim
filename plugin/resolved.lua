@@ -6,7 +6,7 @@ if vim.g.loaded_resolved then
 end
 vim.g.loaded_resolved = true
 
--- Require neovim 0.10+
+-- Require Neovim 0.10+
 if vim.fn.has("nvim-0.10") ~= 1 then
   vim.notify("[resolved.nvim] Requires Neovim 0.10 or later", vim.log.levels.ERROR)
   return

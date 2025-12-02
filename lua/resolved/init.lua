@@ -9,6 +9,8 @@ local M = {}
 -- Internal state
 M._enabled = false
 M._setup_done = false
+M._setup_pending = false -- True while async setup is in progress
+M._setup_generation = 0 -- Incremented on each setup to detect stale callbacks
 M._cache = nil ---@type resolved.Cache|nil
 M._debounce_timers = {} ---@type table<integer, uv_timer_t>
 M._augroup = nil ---@type integer|nil
@@ -21,6 +23,10 @@ end
 
 ---Enable the plugin
 function M.enable()
+  if M._setup_pending then
+    vim.notify("[resolved.nvim] Setup in progress, please wait...", vim.log.levels.INFO)
+    return
+  end
   if not M._setup_done then
     vim.notify(
       "[resolved.nvim] Plugin not set up. Call require('resolved').setup() first.",
@@ -33,7 +39,8 @@ function M.enable()
 end
 
 ---Disable the plugin
-function M.disable()
+---@param full_reset? boolean If true, also reset setup state (for testing)
+function M.disable(full_reset)
   M._enabled = false
   display.clear_all()
   -- Cancel pending timers
@@ -43,6 +50,20 @@ function M.disable()
       timer:close()
     end
     M._debounce_timers[bufnr] = nil
+  end
+
+  -- Full reset for testing or reconfiguration
+  if full_reset then
+    M._setup_done = false
+    M._setup_pending = false
+    M._setup_generation = M._setup_generation + 1 -- Invalidate any pending callbacks
+    M._cache = nil
+    if M._augroup then
+      pcall(vim.api.nvim_del_augroup_by_id, M._augroup)
+      M._augroup = nil
+    end
+    -- Reset GitHub auth cache
+    github._reset_auth_check()
   end
 end
 
@@ -101,8 +122,6 @@ local function process_refs(bufnr, refs)
   if not vim.api.nvim_buf_is_valid(bufnr) then
     return
   end
-
-  local cfg = config.get()
 
   -- Collect URLs that need fetching
   local to_fetch = {}
@@ -404,32 +423,51 @@ function M.setup(user_config)
     return
   end
 
-  -- Step 1: Validate and apply configuration
-  config.setup(user_config)
-  local cfg = config.get()
-
-  -- Step 2: Check GitHub auth BEFORE creating any resources
-  local ok, err = github.check_auth()
-  if not ok then
-    vim.notify(string.format("[resolved.nvim] %s\nPlugin disabled.", err), vim.log.levels.ERROR)
+  -- Prevent concurrent setup attempts
+  if M._setup_pending then
+    vim.notify("[resolved.nvim] Setup already in progress.", vim.log.levels.WARN)
     return
   end
 
-  -- Step 3: Initialize cache (after validation passes)
-  M._cache = cache_mod.new(cfg.cache_ttl)
+  -- Step 1: Validate and apply configuration (sync, fast)
+  config.setup(user_config)
+  local cfg = config.get()
 
-  -- Step 4: Setup autocmds (only after all validation passes)
-  setup_autocmds()
-
-  -- Step 5: Setup commands
+  -- Step 2: Setup commands early so users can interact during async init
   setup_commands()
 
-  M._setup_done = true
+  -- Mark setup as pending with a new generation
+  M._setup_pending = true
+  M._setup_generation = M._setup_generation + 1
+  local my_generation = M._setup_generation
 
-  -- Step 6: Enable if configured to start enabled
-  if cfg.enabled then
-    M.enable()
-  end
+  -- Step 3: Check GitHub auth asynchronously (non-blocking)
+  github.check_auth_async(function(ok, err)
+    -- Guard: if this callback is from a stale setup (reset/new setup occurred), abort
+    if M._setup_generation ~= my_generation then
+      return
+    end
+
+    M._setup_pending = false
+
+    if not ok then
+      -- Silent fail - user can check :checkhealth resolved for details
+      return
+    end
+
+    -- Step 4: Initialize cache (after validation passes)
+    M._cache = cache_mod.new(cfg.cache_ttl)
+
+    -- Step 5: Setup autocmds (only after all validation passes)
+    setup_autocmds()
+
+    M._setup_done = true
+
+    -- Step 6: Enable if configured to start enabled
+    if cfg.enabled then
+      M.enable()
+    end
+  end)
 end
 
 return M

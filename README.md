@@ -1,38 +1,49 @@
-# resolved.nvim
+# 🔍 `resolved.nvim`
 
-Surface stale issue/PR references in your code. When a GitHub issue you're working around gets closed, resolved.nvim lets you know it's time to clean up.
+**resolved.nvim** surfaces stale issue and PR references in your code.
+When a GitHub issue you're working around gets closed, resolved.nvim lets you know it's time to clean up.
 
-## The Problem
+<img alt="In-buffer annotations showing issue status" src="docs/assets/buffer-demo.png" />
 
-```lua
--- TODO: Remove this workaround when https://github.com/neovim/neovim/issues/12345 is fixed
-local function ugly_hack()
-  -- ...
-end
-```
+## ✨ Features
 
-Months later, the issue is closed. But the workaround lives on, forgotten.
+- **🔔 Stale Reference Detection**
+  - ⚠️ **Gutter Signs**: Visual indicators for workarounds that can be removed
+  - 🎨 **Inline Status**: Shows `[completed]`, `[open]`, or `[merged]` after URLs
+  - ~~**Strikethrough URLs**~~: Closed issues get struck through for visibility
 
-## The Solution
+- **🔎 Smart Scanning**
+  - 🌳 **Treesitter-Powered**: Finds URLs in comments across all major languages
+  - 🏷️ **Keyword Detection**: Identifies TODO/FIXME/HACK markers to flag stale workarounds
+  - ⚡ **Debounced Updates**: Efficient scanning that won't slow you down
 
-resolved.nvim scans your code for GitHub issue/PR URLs in comments and shows their status:
+- **📋 Issue Picker**
+  - 🗂️ **Workspace Overview**: Browse all referenced issues across your codebase
+  - 🔗 **Quick Navigation**: Jump to references or open issues in your browser
 
-- **Stale** (closed + keywords like TODO/FIXME): ⚠ gutter sign, yellow strikethrough URL
-- **Closed** (no keywords): Subtle strikethrough, hint color
-- **Open**: Green status indicator
+<img alt="Picker showing all GitHub issues in workspace" src="docs/assets/picker-demo.png" />
 
-<!-- TODO: Add demo GIF -->
+## 📋 Requirements
 
-## Requirements
-
-- Neovim 0.10+
+- **Neovim** `>= 0.10`
 - [GitHub CLI](https://cli.github.com/) (`gh`) - must be authenticated
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
-- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) (recommended)
+- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) _(recommended)_
+- [snacks.nvim](https://github.com/folke/snacks.nvim) for enhanced picker _(optional)_
 
-## Installation
+## 🚀 Quick Start
 
-### lazy.nvim
+1. **Install** the plugin with your package manager (see below)
+2. **Authenticate GitHub CLI**: `gh auth login`
+3. **Check health**: `:checkhealth resolved`
+4. **Try it out**: Open a file with GitHub issue URLs in comments
+
+> [!TIP]
+> Run `:checkhealth resolved` after installation to verify your setup.
+
+## 📦 Installation
+
+Install with [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
@@ -43,7 +54,8 @@ resolved.nvim scans your code for GitHub issue/PR URLs in comments and shows the
 }
 ```
 
-### packer.nvim
+<details>
+<summary>packer.nvim</summary>
 
 ```lua
 use {
@@ -55,15 +67,12 @@ use {
 }
 ```
 
-## Security
+</details>
 
-This plugin takes security seriously. All external commands are executed safely via plenary.job with proper argument separation and timeouts. URLs are validated before processing. See [SECURITY.md](docs/SECURITY.md) for details.
+## ⚙️ Configuration
 
-If you discover a security vulnerability, please see our [security policy](docs/SECURITY.md#reporting-a-vulnerability).
-
-## Configuration
-
-Default configuration (all optional):
+<details>
+<summary>Default settings</summary>
 
 ```lua
 require("resolved").setup({
@@ -123,26 +132,25 @@ require("resolved").setup({
 })
 ```
 
-## Commands
+</details>
 
-Single command with tab completion:
+## 🚀 Commands
 
 ```
 :Resolved <Tab>    → show all subcommands
-:Resolved          → show status
 ```
 
-| Command                  | Description                        |
-| ------------------------ | ---------------------------------- |
-| `:Resolved`              | Show plugin status                 |
-| `:Resolved enable`       | Enable the plugin                  |
-| `:Resolved disable`      | Disable the plugin                 |
-| `:Resolved toggle`       | Toggle enabled state               |
-| `:Resolved refresh`      | Refresh current buffer             |
-| `:Resolved clear_cache`  | Clear the issue status cache       |
-| `:Resolved issues`       | Open picker with all issues/PRs    |
+| Command                 | Description                     |
+| ----------------------- | ------------------------------- |
+| `:Resolved`             | Show plugin status              |
+| `:Resolved enable`      | Enable the plugin               |
+| `:Resolved disable`     | Disable the plugin              |
+| `:Resolved toggle`      | Toggle enabled state            |
+| `:Resolved refresh`     | Refresh current buffer          |
+| `:Resolved clear_cache` | Clear the issue status cache    |
+| `:Resolved issues`      | Open picker with all issues/PRs |
 
-## Lua API
+## 📟 Lua API
 
 ```lua
 local resolved = require("resolved")
@@ -159,9 +167,10 @@ resolved.clear_cache() -- Clear cache
 require("resolved.picker").show_issues_picker()
 ```
 
-## Integrations
+## 🔌 Integrations
 
-### snacks.nvim
+<details>
+<summary>snacks.nvim toggle</summary>
 
 ```lua
 Snacks.toggle.new({
@@ -179,46 +188,37 @@ Snacks.toggle.new({
 }):map("<leader>uR")
 ```
 
-## Health Check
+</details>
 
-Verify your setup with `:checkhealth resolved`:
+## 🏷️ Tier System
 
-```
-resolved.nvim
-- OK gh CLI found: /usr/bin/gh
-- OK gh CLI authenticated
-- OK nvim-treesitter installed
-- OK Plugin initialized
-- OK Plugin enabled
-```
+| Tier       | Condition                  | Display                                    |
+| ---------- | -------------------------- | ------------------------------------------ |
+| **Stale**  | Closed/merged + keywords   | ⚠ gutter, yellow strikethrough, `[closed]` |
+| **Closed** | Closed/merged, no keywords | Strikethrough, `[closed]` in hint color    |
+| **Open**   | Still open or "not_planned"| `[open]` in green                          |
 
-## How It Works
+> [!NOTE]
+> Issues closed as "not_planned" (won't fix) are treated as open—your workaround is still needed.
 
-1. **Scan**: Treesitter finds comments (or inline text in markdown), regex extracts GitHub URLs
-2. **Fetch**: Queries GitHub API via `gh` CLI (cached for 5 minutes)
-3. **Display**: Inline status after URL, strikethrough for closed issues
-
-## Tier System
-
-| Tier       | Condition                   | Display                                     |
-| ---------- | --------------------------- | ------------------------------------------- |
-| **Stale**  | Closed/merged + keywords    | ⚠ gutter, yellow strikethrough, `[closed]` |
-| **Closed** | Closed/merged, no keywords  | Strikethrough, `[closed]` in hint color     |
-| **Open**   | Still open or "not_planned" | `[open]` in green                           |
-
-Issues closed as "not_planned" (won't fix) are treated as open—your workaround is still needed.
-
-## Why Keywords Matter
+## 🤔 Why Keywords Matter
 
 Not every closed issue reference is stale. Documentation references remain valid.
 
 But when your comment says `TODO: remove when #123 is fixed` and #123 is now closed—you want to know. That's what stale keywords detect.
 
-## Development
+## 🔒 Security
 
-### Running Tests
+This plugin takes security seriously. All external commands are executed safely via plenary.job with proper argument separation and timeouts. URLs are validated before processing.
 
-Tests are written using [plenary.nvim](https://github.com/nvim-lua/plenary.nvim).
+See [SECURITY.md](docs/SECURITY.md) for details. If you discover a vulnerability, please see our [security policy](docs/SECURITY.md#reporting-a-vulnerability).
+
+## 🧪 Development
+
+<details>
+<summary>Running tests</summary>
+
+Tests use [plenary.nvim](https://github.com/nvim-lua/plenary.nvim):
 
 ```bash
 # Run all tests
@@ -228,9 +228,11 @@ nvim --headless -c "lua require('plenary.busted').run('tests/resolved/')" -c "qa
 nvim --headless -c "lua require('plenary.busted').run('tests/resolved/patterns_spec.lua')" -c "qa"
 ```
 
-### Test Coverage
+</details>
 
-The plugin has comprehensive test coverage including:
+<details>
+<summary>Test coverage</summary>
+
 - URL pattern extraction and validation
 - Multi-line comment handling
 - Async operation race conditions
@@ -238,19 +240,13 @@ The plugin has comprehensive test coverage including:
 - Configuration validation
 - Timer lifecycle management
 
-### Code Quality
+</details>
 
-- All code follows Lua best practices
-- Type annotations using LuaLS format
-- Comprehensive error handling with logging
-- Security-first design (input validation, safe command execution)
+## 📝 TODO
 
-## TODO
-
-- [ ] Add demo GIF showing: file with GitHub URLs → status indicators appearing → picker (`:Resolved issues`)
 - [ ] lualine.nvim integration (show stale issue count in statusline)
 - [ ] telescope.nvim picker integration
 
-## License
+## 📄 License
 
 MIT
