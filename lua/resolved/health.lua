@@ -39,19 +39,6 @@ function M.check()
     })
   end
 
-  -- Check optional icon providers
-  local mini_ok = pcall(require, "mini.icons")
-  local devicons_ok = pcall(require, "nvim-web-devicons")
-
-  if mini_ok then
-    health.ok("mini.icons available (set icon_provider = 'mini' to use)")
-  end
-  if devicons_ok then
-    health.ok("nvim-web-devicons available (set icon_provider = 'devicons' to use)")
-  end
-  if not mini_ok and not devicons_ok then
-    health.info("No icon provider found (using default icons)")
-  end
 
   -- Check plugin state
   local resolved = require("resolved")

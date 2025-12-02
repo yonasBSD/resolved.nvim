@@ -55,10 +55,12 @@ M.defaults = {
     markdown = { node_types = { "inline" } },
     ["*"] = { node_types = { "comment" } },
   },
+  -- Icons (nerd font - override if you don't have nerd fonts)
   icons = {
-    stale = "⚠",
-    stale_sign = "⚠",
-    open = "",
+    stale = "",
+    stale_sign = "",
+    open = "",
+    closed = "",
   },
   highlights = {
     -- High priority: closed + keywords (warning/yellow)
@@ -73,8 +75,6 @@ M.defaults = {
   },
   -- Show sign column indicators
   signs = true,
-  -- Icon provider: "mini" (mini.icons), "devicons" (nvim-web-devicons), or false for defaults
-  icon_provider = false,
 }
 
 ---@type resolved.Config

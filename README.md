@@ -29,6 +29,7 @@ When a GitHub issue you're working around gets closed, resolved.nvim lets you kn
 - [GitHub CLI](https://cli.github.com/) (`gh`) - must be authenticated
 - [plenary.nvim](https://github.com/nvim-lua/plenary.nvim)
 - [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) _(recommended)_
+- [Nerd Font](https://www.nerdfonts.com/) _(recommended for icons)_
 - [snacks.nvim](https://github.com/folke/snacks.nvim) for enhanced picker _(optional)_
 
 ## 🚀 Quick Start
@@ -110,11 +111,13 @@ require("resolved").setup({
   -- Show gutter signs for stale references
   signs = true,
 
-  -- Icons
+  -- Icons (nerd font - override if you don't have nerd fonts)
+  -- Without nerd fonts: { stale = "⚠", stale_sign = "⚠", open = "●", closed = "✓" }
   icons = {
-    stale = "⚠",
-    stale_sign = "⚠",
-    open = "",
+    stale = "",
+    stale_sign = "",
+    open = "",
+    closed = "",
   },
 
   -- Highlight groups
@@ -126,9 +129,6 @@ require("resolved").setup({
     closed_url = "ResolvedClosedUrl",
     open = "DiagnosticOk",
   },
-
-  -- Icon provider: "mini", "devicons", or false for defaults
-  icon_provider = false,
 })
 ```
 
@@ -201,11 +201,11 @@ require("resolved.picker").show_issues_picker()
 
 ## 🏷️ Tier System
 
-| Tier       | Condition                  | Display                                |
-| ---------- | -------------------------- | -------------------------------------- |
-| **Stale**  | Closed/merged + keywords   | ⚠ gutter sign, bold URL, `[completed]` |
-| **Closed** | Closed/merged, no keywords | Italic URL, `[closed]` in hint color   |
-| **Open**   | Still open or "not_planned"| `[open]` in green                      |
+| Tier       | Condition                   | Display                                 |
+| ---------- | --------------------------- | --------------------------------------- |
+| **Stale**  | Closed/merged + keywords    | ⚠ gutter sign, bold URL, `[completed]` |
+| **Closed** | Closed/merged, no keywords  | Italic URL, `[closed]` in hint color    |
+| **Open**   | Still open or "not_planned" | `[open]` in green                       |
 
 > [!NOTE]
 > Issues closed as "not_planned" (won't fix) are treated as open—your workaround is still needed.

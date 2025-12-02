@@ -1,4 +1,5 @@
 local Job = require("plenary.job")
+local icons = require("resolved.icons")
 
 -- Constants
 local MAX_FILE_SIZE_BYTES = 1024 * 1024 -- 1MB - skip files larger than this
@@ -267,13 +268,13 @@ local function format_issue(issue)
   local icon, color_marker
 
   if issue.is_stale then
-    icon = "⚠ "
+    icon = icons.stale()
     color_marker = "●" -- Yellow/warning dot
   elseif issue.state == "open" then
-    icon = " "
+    icon = icons.open()
     color_marker = "●" -- Green dot
   else
-    icon = "✓ "
+    icon = icons.closed()
     color_marker = "●" -- Gray dot
   end
 
@@ -287,13 +288,13 @@ local function format_issue(issue)
   end
 
   -- Build format: color_marker [state] icon owner/repo#number (refs) - title
-  local status = string.format("[%-6s]", issue.state) -- Pad status to 6 chars for alignment
+  local status = string.format("[%-7s]", issue.state) -- Pad to 7 for "unknown"
   local issue_id = string.format("%s/%s#%d", issue.owner, issue.repo, issue.number)
 
   -- Only show ref count if > 1 to save space
   local ref_info = ref_count > 1 and string.format(" (%d refs)", ref_count) or ""
 
-  return string.format("%s %s %s%s%s - %s", color_marker, status, icon, issue_id, ref_info, title)
+  return string.format("%s %s %s %s%s - %s", color_marker, status, icon, issue_id, ref_info, title)
 end
 
 ---Build picker issues from refs and states
@@ -334,6 +335,7 @@ local function build_picker_issues(by_url, states)
     issue.text = format_issue(issue)
     issue.file = ref.file_path -- For preview
     issue.pos = { ref.line, ref.col } -- Line and column for preview
+    issue.preview_title = string.format("%s:%d", vim.fn.fnamemodify(ref.file_path, ":~:."), ref.line)
 
     -- Add highlight group for coloring
     if issue.is_stale then
@@ -488,7 +490,18 @@ local function create_picker(items, opts)
       items = items,
       format = format,
       prompt = opts.prompt,
-      on_select = opts.on_select,
+      confirm = opts.on_select,
+      preview = "file",
+      on_change = function(picker, item)
+        if item and item.preview_title then
+          vim.schedule(function()
+            local preview_win = picker.preview and picker.preview.win
+            if preview_win and preview_win.win and vim.api.nvim_win_is_valid(preview_win.win) then
+              vim.api.nvim_win_set_config(preview_win.win, { title = item.preview_title })
+            end
+          end)
+        end
+      end,
     })
   else
     -- Fallback to vim.ui.select
