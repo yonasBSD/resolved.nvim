@@ -490,7 +490,12 @@ local function create_picker(items, opts)
       items = items,
       format = format,
       prompt = opts.prompt,
-      confirm = opts.on_select,
+      confirm = function(picker, item)
+        if item then
+          picker:close()
+          opts.on_select(item)
+        end
+      end,
       preview = "file",
       on_change = function(picker, item)
         if item and item.preview_title then
